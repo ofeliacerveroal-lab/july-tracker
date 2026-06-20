@@ -424,7 +424,7 @@ function TabTension({ tension, saveTension, showToast, readOnly }) {
           <div style={{ fontWeight:700, marginBottom:12 }}>Registrar medición</div>
           <div style={{ display:'flex', gap:8, marginBottom:12 }}>
             {[{v:'morning',l:'Mañana ☀️'},{v:'evening',l:'Noche 🌙'}].map(p => (
-              <button key={p.v} onClick={() => setPeriod(p.v)}
+              <button key={p.v} onClick={() => { if (p.v !== period) { setPeriod(p.v); setSys(''); setDia(''); setPulse(''); } }}
                 style={{ flex:1, padding:'9px', borderRadius:10, border:`1.5px solid ${period===p.v?C.sage:C.border}`,
                   background: period===p.v ? C.sageLight : C.white, color: period===p.v ? C.sageDark : C.slateLight,
                   fontWeight:600, fontSize:13, cursor:'pointer', transition:'all .15s' }}>
