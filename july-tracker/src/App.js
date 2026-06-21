@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 
 // ── Design tokens ──────────────────────────────────────────────
 const C = {
@@ -26,7 +26,12 @@ const KEYS = {
   role:         'jt_role',
 };
 
-const TODAY = new Date().toISOString().split('T')[0];
+// Fecha en formato YYYY-MM-DD usando la hora LOCAL (no UTC), para que
+// coincida con PLAN_DAYS y con lo que ve el usuario en su huso horario.
+function isoDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+const TODAY = isoDate(new Date());
 
 function readLS(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
@@ -39,12 +44,16 @@ function writeLS(key, value) {
 }
 
 function useShared(key, init) {
-  const [val, setVal] = useState(() => readLS(key, init));
+  // init suele ser un literal nuevo en cada render ([] o {}). Lo guardamos en
+  // una ref para que el efecto dependa solo de `key` y no se resuscriba (con su
+  // add/removeEventListener) en cada render.
+  const initRef = useRef(init);
+  const [val, setVal] = useState(() => readLS(key, initRef.current));
   useEffect(() => {
-    const handler = (e) => { if (e.key === key) setVal(readLS(key, init)); };
+    const handler = (e) => { if (e.key === key) setVal(readLS(key, initRef.current)); };
     window.addEventListener('storage', handler);
     return () => window.removeEventListener('storage', handler);
-  }, [key, init]);
+  }, [key]);
   const save = useCallback((v) => { setVal(v); writeLS(key, v); }, [key]);
   return [val, save];
 }
@@ -132,16 +141,31 @@ export default function App() {
   ]);
   const [reminder, setReminder] = useState(null);
   const [toast, setToast] = useState(null);
+  // Recuerda el último aviso ya mostrado para no volver a abrirlo cada minuto
+  // mientras dura su franja horaria (si el usuario lo cierra, no reaparece).
+  const lastReminderRef = useRef(null);
 
   // Reminder logic
   useEffect(() => {
     const check = () => {
       const now = new Date();
       const t = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-      if (t >= '07:45' && t < '08:05') setReminder('¡Hora del desayuno! Haz la foto 📸');
-      else if (t >= '14:00' && t < '14:10') setReminder('¡Hora de comer! Foto antes de empezar 📸');
-      else if (t >= '19:00' && t < '19:10') setReminder('Tensión arterial nocturna — mídela ahora 💊');
-      else if (t >= '21:30' && t < '21:40') setReminder('¡Hora de cenar! No olvides la foto 📸');
+      let msg = null;
+      if (t >= '07:45' && t < '08:05') msg = '¡Hora del desayuno! Haz la foto 📸';
+      else if (t >= '14:00' && t < '14:10') msg = '¡Hora de comer! Foto antes de empezar 📸';
+      else if (t >= '19:00' && t < '19:10') msg = 'Tensión arterial nocturna — mídela ahora 💊';
+      else if (t >= '21:30' && t < '21:40') msg = '¡Hora de cenar! No olvides la foto 📸';
+
+      if (msg) {
+        // Solo se muestra una vez por franja; tras cerrarlo no reaparece.
+        if (msg !== lastReminderRef.current) {
+          lastReminderRef.current = msg;
+          setReminder(msg);
+        }
+      } else {
+        // Fuera de toda franja: reseteamos para que el próximo aviso se muestre.
+        lastReminderRef.current = null;
+      }
     };
     check();
     const iv = setInterval(check, 60000);
@@ -425,8 +449,7 @@ function MealSlot({ slot, entries, onAdd, onDelete }) {
 // Plan fijo de 7 días: sábado 20 → viernes 26 de junio de 2026
 const PLAN_DAYS = Array.from({ length:7 }, (_, i) => {
   const d = new Date(2026, 5, 20 + i); // mes 5 = junio (hora local)
-  const iso = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  return { iso, d };
+  return { iso: isoDate(d), d };
 });
 
 function TabTension({ tension, saveTension, showToast, readOnly }) {
@@ -593,9 +616,15 @@ function TabPeso({ measurements, saveMeasurements, showToast, readOnly }) {
 
   const add = () => {
     if (!weight) return;
-    saveMeasurements([...measurements, { date:TODAY, weight:+weight, waist:waist?+waist:null, hips:hips?+hips:null }]);
+    const entry = { date:TODAY, weight:+weight, waist:waist?+waist:null, hips:hips?+hips:null };
+    // Una sola medición por día: si ya existe una de hoy, se actualiza en vez de
+    // duplicarla (evita keys repetidas y que borrar elimine las dos).
+    const exists = measurements.some(m => m.date === TODAY);
+    saveMeasurements(exists
+      ? measurements.map(m => m.date === TODAY ? entry : m)
+      : [...measurements, entry]);
     setWeight(''); setWaist(''); setHips('');
-    showToast('✓ Medición guardada');
+    showToast(exists ? '✓ Medición actualizada' : '✓ Medición guardada');
   };
   const del = (date) => { saveMeasurements(measurements.filter(m=>m.date!==date)); showToast('Eliminado'); };
 
@@ -693,10 +722,10 @@ function MiniChart({ data, field, color, unit }) {
 function TabCoachResumen({ tension, meals, measurements }) {
   const todayMeals = meals.filter(m => m.date === TODAY);
   const photoCount = todayMeals.filter(m => m.image).length;
-  const last7tension = tension.filter(t => {
-    const d = new Date(t.date);
-    return (new Date() - d) / 86400000 <= 7;
-  });
+  // Últimos 7 días (hoy incluido), comparando cadenas de fecha YYYY-MM-DD para
+  // no depender de la hora ni colar mediciones con fecha futura.
+  const weekAgo = isoDate(new Date(Date.now() - 6 * 86400000));
+  const last7tension = tension.filter(t => t.date >= weekAgo && t.date <= TODAY);
   const last = measurements[measurements.length-1];
   const first = measurements[0];
 
