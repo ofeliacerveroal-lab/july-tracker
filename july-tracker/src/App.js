@@ -60,7 +60,25 @@ const Ic = {
   check:  <svg viewBox="0 0 24 24" fill="currentColor" style={{width:14,height:14}}><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>,
   plus:   <svg viewBox="0 0 24 24" fill="currentColor" style={{width:18,height:18}}><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>,
   bell:   <svg viewBox="0 0 24 24" fill="currentColor" style={{width:18,height:18}}><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>,
+  menu:   <svg viewBox="0 0 24 24" fill="currentColor" style={{width:18,height:18}}><path d="M8.1 13.34l2.83-2.83L3.91 3.5a4 4 0 0 0 0 5.66l4.19 4.18zm6.78-1.81c1.53.71 3.68.21 5.27-1.38 1.91-1.91 2.28-4.65.81-6.12-1.46-1.46-4.2-1.1-6.12.81-1.59 1.59-2.09 3.74-1.38 5.27L3.7 19.87l1.41 1.41L12 14.41l6.88 6.88 1.41-1.41L13.41 13l1.47-1.47z"/></svg>,
 };
+
+// ── Food groups (shared by Guía and Menú) ──────────────────────
+const FOOD_GROUPS = {
+  verduras:  ['Tomates','Pepinos','Lechuga','Zanahoria','Calabacín','Brócoli','Coliflor','Pimiento','Champiñones','Berenjena','Espárragos','Judías verdes'],
+  proteinas: ['Huevos','Pollo','Pavo','Pescado','Atún','Salmón','Gambas','Lentejas','Garbanzos','Judías','Yogur griego','Kéfir','Queso fresco','Queso cottage'],
+  carbos:    ['Arroz','Quinoa','Patata','Batata','Cuscús','Pan integral','Avena','Pasta','Frutas','Maíz'],
+  grasas:    ['Aceite de oliva','Aguacate','Frutos secos','Pistachos','Aceitunas','Semillas de girasol','Nueces','Semillas de chía/lino','Crema de cacahuete 100%'],
+};
+const BREAKFASTS = [
+  'Yogur griego + fruta + un puñado de frutos secos',
+  '2 huevos + tostada integral + aguacate',
+  'Queso fresco + fruta + café',
+  'Avena con leche + plátano + nueces',
+  'Tortilla de claras + tomate + pan integral',
+  'Kéfir + fruta + semillas de chía',
+];
+const SNACKS = ['Fruta de temporada','Un puñado de frutos secos','Yogur griego','Palitos de zanahoria + hummus','Queso fresco','Pistachos'];
 
 // ── Meal config ────────────────────────────────────────────────
 const MEAL_SLOTS = [
@@ -143,6 +161,7 @@ export default function App() {
       ]
     : [
         { id:'hoy',     label:'Hoy',     icon:Ic.food },
+        { id:'menu',    label:'Menú',    icon:Ic.menu },
         { id:'tension', label:'Tensión', icon:Ic.heart },
         { id:'peso',    label:'Progreso',icon:Ic.chart },
         { id:'guia',    label:'Guía',    icon:Ic.guide },
@@ -208,6 +227,7 @@ export default function App() {
       <div style={{ padding:'16px 14px 100px', maxWidth:540, margin:'0 auto' }}>
         {/* CLIENT TABS */}
         {role === 'client' && activeTab === 'hoy'     && <TabHoy meals={meals} saveMeals={saveMeals} showToast={showToast} />}
+        {role === 'client' && activeTab === 'menu'    && <TabMenu />}
         {role === 'client' && activeTab === 'tension' && <TabTension tension={tension} saveTension={saveTension} showToast={showToast} />}
         {role === 'client' && activeTab === 'peso'    && <TabPeso measurements={measurements} saveMeasurements={saveMeasurements} showToast={showToast} />}
         {role === 'client' && activeTab === 'guia'    && <TabGuia />}
@@ -344,9 +364,9 @@ function MealSlot({ slot, entries, onAdd, onDelete }) {
             style={{ width:'100%', padding:'9px 12px', border:`1px solid ${C.border}`, borderRadius:8, fontSize:13,
               fontFamily:'inherit', resize:'none', minHeight:56, outline:'none', marginBottom:10 }} />
           <div style={{ display:'flex', gap:8 }}>
-            <button onClick={submit} disabled={!preview}
-              style={{ flex:1, padding:'11px', background: preview ? C.sage : C.border, color:C.white,
-                border:'none', borderRadius:10, cursor: preview ? 'pointer' : 'default', fontWeight:700, fontSize:14 }}>
+            <button onClick={submit} disabled={!preview && !note.trim()}
+              style={{ flex:1, padding:'11px', background: (preview||note.trim()) ? C.sage : C.border, color:C.white,
+                border:'none', borderRadius:10, cursor: (preview||note.trim()) ? 'pointer' : 'default', fontWeight:700, fontSize:14 }}>
               Guardar
             </button>
             <button onClick={() => { setOpen(false); setPreview(null); setNote(''); }}
@@ -390,23 +410,30 @@ function TabTension({ tension, saveTension, showToast, readOnly }) {
     return d.toISOString().split('T')[0];
   });
 
-  const uniqueDays = new Set(tension.map(t => t.date));
+  // Per-day record of which periods were measured (morning / evening)
+  const periodsByDay = tension.reduce((acc, t) => {
+    (acc[t.date] = acc[t.date] || {})[t.period] = true;
+    return acc;
+  }, {});
+  const fullDays = last7.filter(d => periodsByDay[d]?.morning && periodsByDay[d]?.evening).length;
 
   return (
     <div>
       {/* 7-day grid */}
       <div style={{ background:C.sageLight, border:`1px solid ${C.sage}`, borderRadius:16, padding:16, marginBottom:16 }}>
-        <div style={{ fontWeight:700, color:C.sageDark, marginBottom:12 }}>Control de 7 días (July)</div>
+        <div style={{ fontWeight:700, color:C.sageDark, marginBottom:12 }}>Control de 7 días · mañana ☀️ y noche 🌙</div>
         <div style={{ display:'flex', gap:5 }}>
           {last7.map(date => {
-            const has = uniqueDays.has(date);
+            const p = periodsByDay[date] || {};
             const d = new Date(date);
+            const cell = (on) => ({ flex:1, height:22, borderRadius:6, background: on ? C.sage : C.white,
+              border:`1px solid ${on?C.sage:C.border}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:11 });
             return (
               <div key={date} style={{ flex:1, textAlign:'center' }}>
                 <div style={{ fontSize:9, color:C.slateLight, marginBottom:4 }}>{d.toLocaleDateString('es-ES',{weekday:'narrow'})}</div>
-                <div style={{ height:30, borderRadius:8, background: has ? C.sage : C.white, border:`1px solid ${has?C.sage:C.border}`,
-                  display:'flex', alignItems:'center', justifyContent:'center' }}>
-                  {has && <span style={{color:C.white,fontSize:13}}>✓</span>}
+                <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
+                  <div style={cell(p.morning)}>{p.morning ? <span style={{color:C.white}}>✓</span> : <span style={{opacity:.4}}>☀️</span>}</div>
+                  <div style={cell(p.evening)}>{p.evening ? <span style={{color:C.white}}>✓</span> : <span style={{opacity:.4}}>🌙</span>}</div>
                 </div>
                 <div style={{ fontSize:8, color:C.slateLight, marginTop:3 }}>{d.getDate()}/{d.getMonth()+1}</div>
               </div>
@@ -414,7 +441,7 @@ function TabTension({ tension, saveTension, showToast, readOnly }) {
           })}
         </div>
         <div style={{ fontSize:12, color:C.sageDark, marginTop:10, fontWeight:600 }}>
-          {[...uniqueDays].filter(d => last7.includes(d)).length}/7 días registrados
+          {fullDays}/7 días completos (mañana + noche)
         </div>
       </div>
 
@@ -771,10 +798,10 @@ function TabGuia() {
 
       {/* Food lists */}
       {[
-        { title:'🥦 Verduras (½ plato)', color:C.sage, items:['Tomates','Pepinos','Lechuga','Zanahoria','Calabacín','Brócoli','Coliflor','Pimiento','Champiñones','Berenjena','Espárragos','Judías verdes'] },
-        { title:'🍗 Proteínas (¼ plato)', color:C.gold, items:['Huevos','Pollo','Pavo','Pescado','Atún','Salmón','Gambas','Lentejas','Garbanzos','Judías','Yogur griego','Kéfir','Queso fresco','Queso cottage'] },
-        { title:'🍚 Carbohidratos (¼ plato)', color:C.coral, items:['Arroz','Quinoa','Patata','Batata','Cuscús','Pan integral','Avena','Pasta','Frutas','Maíz'] },
-        { title:'🥑 Grasas saludables', color:C.sageDark, items:['Aceite de oliva','Aguacate','Frutos secos','Pistachos','Aceitunas','Semillas de girasol','Nueces','Semillas de chía/lino','Crema de cacahuete 100%'] },
+        { title:'🥦 Verduras (½ plato)', color:C.sage, items:FOOD_GROUPS.verduras },
+        { title:'🍗 Proteínas (¼ plato)', color:C.gold, items:FOOD_GROUPS.proteinas },
+        { title:'🍚 Carbohidratos (¼ plato)', color:C.coral, items:FOOD_GROUPS.carbos },
+        { title:'🥑 Grasas saludables', color:C.sageDark, items:FOOD_GROUPS.grasas },
       ].map(fl => <FoodList key={fl.title} {...fl} />)}
     </div>
   );
@@ -799,6 +826,85 @@ function FoodList({ title, items, color }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════
+// TAB: MENÚ (client) — genera platos siguiendo la regla ½·¼·¼
+// ════════════════════════════════════════════════════════════════
+const sample = (arr, n) => {
+  const copy = [...arr];
+  const out = [];
+  for (let i = 0; i < n && copy.length; i++) {
+    out.push(copy.splice(Math.floor(Math.random() * copy.length), 1)[0]);
+  }
+  return out;
+};
+const buildPlate = () => ({
+  verduras:  sample(FOOD_GROUPS.verduras, 2),
+  proteina:  sample(FOOD_GROUPS.proteinas, 1)[0],
+  carbo:     sample(FOOD_GROUPS.carbos, 1)[0],
+  grasa:     sample(FOOD_GROUPS.grasas, 1)[0],
+});
+const buildMenu = () => ({
+  desayuno: sample(BREAKFASTS, 1)[0],
+  comida:   buildPlate(),
+  cena:     buildPlate(),
+  tentempie: sample(SNACKS, 1)[0],
+});
+
+function Plate({ p }) {
+  const Row = ({ color, label, value }) => (
+    <div style={{ display:'flex', gap:8, alignItems:'flex-start', marginBottom:6, fontSize:13 }}>
+      <span style={{ width:10, height:10, borderRadius:3, background:color, flexShrink:0, marginTop:4 }} />
+      <div><strong style={{ color:C.slate }}>{label}:</strong> {value}</div>
+    </div>
+  );
+  return (
+    <div>
+      <Row color={C.sage}     label="½ Verduras"  value={p.verduras.join(' · ')} />
+      <Row color={C.gold}     label="¼ Proteína"  value={p.proteina} />
+      <Row color={C.coral}    label="¼ Carbos"    value={p.carbo} />
+      <Row color={C.sageDark} label="Grasa"       value={p.grasa} />
+    </div>
+  );
+}
+
+function TabMenu() {
+  const [menu, setMenu] = useState(buildMenu);
+
+  const Card = ({ emoji, title, color, children }) => (
+    <div style={{ background:C.white, borderRadius:16, padding:16, marginBottom:12, boxShadow:'0 1px 4px rgba(0,0,0,.05)', borderLeft:`4px solid ${color}` }}>
+      <div style={{ fontWeight:700, fontSize:15, marginBottom:10 }}>{emoji} {title}</div>
+      {children}
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ background:C.sageLight, border:`1px solid ${C.sage}`, borderRadius:16, padding:16, marginBottom:16 }}>
+        <div style={{ fontWeight:800, fontSize:15, color:C.sageDark, marginBottom:4 }}>🍽️ Tu menú de hoy</div>
+        <div style={{ fontSize:13, color:C.slateLight }}>Generado con los alimentos de tu plan · ½ verduras · ¼ proteína · ¼ carbos + grasa saludable</div>
+      </div>
+
+      <Card emoji="☀️" title="Desayuno" color={C.gold}>
+        <div style={{ fontSize:13 }}>{menu.desayuno}</div>
+      </Card>
+      <Card emoji="🍽️" title="Comida" color={C.sage}><Plate p={menu.comida} /></Card>
+      <Card emoji="🌙" title="Cena" color={C.sageDark}><Plate p={menu.cena} /></Card>
+      <Card emoji="🍎" title="Tentempié" color={C.coral}>
+        <div style={{ fontSize:13 }}>{menu.tentempie}</div>
+      </Card>
+
+      <button onClick={() => setMenu(buildMenu())}
+        style={{ width:'100%', padding:14, background:C.sage, color:C.white, border:'none', borderRadius:12,
+          fontWeight:700, fontSize:15, cursor:'pointer', marginTop:4 }}>
+        🔄 Generar otro menú
+      </button>
+      <div style={{ textAlign:'center', fontSize:11, color:C.slateLight, marginTop:10 }}>
+        Las cantidades siguen la regla del plato: mitad verduras, un cuarto proteína y un cuarto carbohidratos, con un poco de grasa saludable.
+      </div>
     </div>
   );
 }
