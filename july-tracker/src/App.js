@@ -245,11 +245,25 @@ export default function App() {
 // TAB: HOY (client)
 // ════════════════════════════════════════════════════════════════
 function TabHoy({ meals, saveMeals, showToast }) {
-  const todayMeals = meals.filter(m => m.date === TODAY);
-  const photoCount = todayMeals.filter(m => m.image).length;
+  // Día seleccionado del plan (hoy si está dentro, si no el primer día)
+  const initialDate = PLAN_DAYS.some(p => p.iso === TODAY) ? TODAY : PLAN_DAYS[0].iso;
+  const [selDate, setSelDate] = useState(initialDate);
+
+  const dayMeals = meals.filter(m => m.date === selDate);
+  const photoCount = dayMeals.filter(m => m.image).length;
+
+  // Nº de fotos por día para el indicador de cumplimiento del calendario
+  const photosByDay = {};
+  meals.forEach(m => { if (m.image) photosByDay[m.date] = (photosByDay[m.date] || 0) + 1; });
+
+  const selObj = PLAN_DAYS.find(p => p.iso === selDate);
+  const isToday = selDate === TODAY;
+  const dayLabel = isToday ? 'hoy' : (selObj
+    ? `el ${selObj.d.toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'long'})}`
+    : selDate);
 
   const addMeal = (slotId, imageData, note) => {
-    const entry = { id:Date.now(), date:TODAY, slot:slotId, image:imageData, note,
+    const entry = { id:Date.now(), date:selDate, slot:slotId, image:imageData, note,
       ts: new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}) };
     saveMeals([...meals, entry]);
     showToast('✓ Foto guardada');
@@ -258,11 +272,36 @@ function TabHoy({ meals, saveMeals, showToast }) {
 
   return (
     <div>
+      {/* Calendario del plan */}
+      <div style={{ background:C.white, borderRadius:16, padding:16, marginBottom:16, boxShadow:'0 1px 4px rgba(0,0,0,.05)' }}>
+        <div style={{ fontWeight:700, marginBottom:2 }}>Mi seguimiento · 7 días</div>
+        <div style={{ fontSize:11, color:C.slateLight, marginBottom:12 }}>Sáb 20 → Vie 26 de junio · toca un día para ver o añadir sus comidas</div>
+        <div style={{ display:'flex', gap:5 }}>
+          {PLAN_DAYS.map(({ iso, d }) => {
+            const isSel = selDate === iso;
+            const done = (photosByDay[iso] || 0) >= 3;
+            const some = (photosByDay[iso] || 0) > 0;
+            const isFuture = iso > TODAY;
+            return (
+              <button key={iso} onClick={() => setSelDate(iso)}
+                style={{ flex:1, padding:'8px 0', borderRadius:10, cursor:'pointer',
+                  border: isSel ? `2px solid ${C.sageDark}` : `1px solid ${C.border}`,
+                  background: isSel ? C.sageLight : C.white, opacity: isFuture ? .55 : 1, lineHeight:1.3 }}>
+                <div style={{ fontSize:10, color:C.slateLight, textTransform:'capitalize' }}>{d.toLocaleDateString('es-ES',{weekday:'short'}).replace('.','')}</div>
+                <div style={{ fontSize:15, fontWeight:700, color:C.slate }}>{d.getDate()}</div>
+                <div style={{ fontSize:11, marginTop:2, height:14 }}>{done ? '✅' : some ? '🟡' : (isFuture ? '' : '⬜')}</div>
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ fontSize:11, color:C.slateLight, marginTop:10 }}>✅ 3 fotos · 🟡 alguna foto · ⬜ sin fotos</div>
+      </div>
+
       {/* Photo counter */}
       <div style={{ background: photoCount>=3 ? C.sageLight : C.goldLight, border:`1px solid ${photoCount>=3 ? C.sage : C.gold}`,
         borderRadius:16, padding:16, marginBottom:16 }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
-          <span style={{ fontSize:13, fontWeight:700, color: photoCount>=3 ? C.sageDark : C.gold }}>Fotos enviadas a July hoy</span>
+          <span style={{ fontSize:13, fontWeight:700, color: photoCount>=3 ? C.sageDark : C.gold }}>Fotos enviadas a July {dayLabel}</span>
           <span style={{ fontSize:26, fontWeight:800, color: photoCount>=3 ? C.sageDark : C.gold }}>{photoCount}<span style={{fontSize:16,fontWeight:400}}>/3</span></span>
         </div>
         <div style={{ height:6, background:'rgba(0,0,0,.08)', borderRadius:99 }}>
@@ -273,7 +312,7 @@ function TabHoy({ meals, saveMeals, showToast }) {
 
       {MEAL_SLOTS.map(slot => (
         <MealSlot key={slot.id} slot={slot}
-          entries={todayMeals.filter(m => m.slot === slot.id)}
+          entries={dayMeals.filter(m => m.slot === slot.id)}
           onAdd={(img, note) => addMeal(slot.id, img, note)}
           onDelete={deleteMeal} />
       ))}
