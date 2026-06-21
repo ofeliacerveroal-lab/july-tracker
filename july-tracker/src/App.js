@@ -37,10 +37,65 @@ function readLS(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
   catch { return fallback; }
 }
+
+// Las fotos de comida se guardan como base64 en localStorage y son, con
+// diferencia, lo que más espacio ocupa. Cuando se llena la cuota (~5 MB),
+// CUALQUIER setItem posterior falla, incluido el de una tensión o un peso
+// (datos diminutos pero críticos). Para liberar espacio quitamos la imagen de
+// la comida más antigua, conservando su nota y hora.
+// Devuelve un nuevo array de comidas, o null si no quedaba ninguna imagen.
+function dropOldestMealImage(meals) {
+  const oldestWithImage = meals
+    .filter(m => m.image)
+    .sort((a, b) => a.id - b.id)[0];
+  if (!oldestWithImage) return null;
+  return meals.map(m => m.id === oldestWithImage.id ? { ...m, image: null, pruned: true } : m);
+}
+// Libera una foto del blob de comidas ya almacenado (para cuando el que no cabe
+// es OTRO dato, p. ej. una tensión). Devuelve si pudo liberar algo.
+function pruneStoredMealImage() {
+  try {
+    const meals = JSON.parse(localStorage.getItem(KEYS.meals)) || [];
+    const pruned = dropOldestMealImage(meals);
+    if (!pruned) return false;
+    localStorage.setItem(KEYS.meals, JSON.stringify(pruned));
+    return true;
+  } catch { return false; }
+}
+
+// Devuelve true si el valor se persistió. Ante falta de espacio, libera fotos
+// antiguas y reintenta, para que los datos críticos siempre se guarden.
 function writeLS(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
-  // Notify other tabs
-  window.dispatchEvent(new StorageEvent('storage', { key, newValue: JSON.stringify(value) }));
+  let current = value;
+  let str = JSON.stringify(current);
+  let saved = false, prunedMeals = false;
+  for (let attempt = 0; attempt < 500; attempt++) {
+    try { localStorage.setItem(key, str); saved = true; break; }
+    catch {
+      // Probablemente QuotaExceededError: hacemos sitio y reintentamos.
+      if (key === KEYS.meals) {
+        // Lo que no cabe es el propio array de comidas: recortamos del valor
+        // que vamos a guardar (si no, reescribiríamos lo mismo y no cabría).
+        const pruned = dropOldestMealImage(current);
+        if (!pruned) break;
+        current = pruned; str = JSON.stringify(current); prunedMeals = true;
+      } else if (pruneStoredMealImage()) {
+        prunedMeals = true;
+      } else {
+        break; // no queda nada que liberar
+      }
+    }
+  }
+  if (saved) {
+    // Notify other tabs / other hooks in this tab.
+    window.dispatchEvent(new StorageEvent('storage', { key, newValue: str }));
+    // Si hemos tenido que recortar fotos de OTRO blob, avisamos al hook de
+    // comidas para que refresque su vista con las imágenes ya liberadas.
+    if (prunedMeals && key !== KEYS.meals) {
+      window.dispatchEvent(new StorageEvent('storage', { key: KEYS.meals, newValue: localStorage.getItem(KEYS.meals) }));
+    }
+  }
+  return saved;
 }
 
 function useShared(key, init) {
@@ -54,7 +109,8 @@ function useShared(key, init) {
     window.addEventListener('storage', handler);
     return () => window.removeEventListener('storage', handler);
   }, [key]);
-  const save = useCallback((v) => { setVal(v); writeLS(key, v); }, [key]);
+  // Devuelve si se pudo persistir, para que la UI avise cuando no haya espacio.
+  const save = useCallback((v) => { setVal(v); return writeLS(key, v); }, [key]);
   return [val, save];
 }
 
@@ -482,8 +538,9 @@ function TabTension({ tension, saveTension, showToast, readOnly }) {
     const entry = { id: existing ? existing.id : Date.now(), date:selDate, sys:+sys, dia:+dia,
       pulse: pulse ? +pulse : null, period,
       ts: new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}) };
-    saveTension(existing ? tension.map(t => t.id === existing.id ? entry : t) : [...tension, entry]);
-    showToast(existing ? '✓ Tensión actualizada' : '✓ Tensión guardada');
+    const ok = saveTension(existing ? tension.map(t => t.id === existing.id ? entry : t) : [...tension, entry]);
+    if (ok) showToast(existing ? '✓ Tensión actualizada' : '✓ Tensión guardada');
+    else showToast('⚠️ No se pudo guardar: sin espacio en el dispositivo');
   };
   const del = (id) => { saveTension(tension.filter(t => t.id !== id)); showToast('Eliminado'); };
 
@@ -620,9 +677,10 @@ function TabPeso({ measurements, saveMeasurements, showToast, readOnly }) {
     // Una sola medición por día: si ya existe una de hoy, se actualiza en vez de
     // duplicarla (evita keys repetidas y que borrar elimine las dos).
     const exists = measurements.some(m => m.date === TODAY);
-    saveMeasurements(exists
+    const ok = saveMeasurements(exists
       ? measurements.map(m => m.date === TODAY ? entry : m)
       : [...measurements, entry]);
+    if (!ok) { showToast('⚠️ No se pudo guardar: sin espacio en el dispositivo'); return; }
     setWeight(''); setWaist(''); setHips('');
     showToast(exists ? '✓ Medición actualizada' : '✓ Medición guardada');
   };
