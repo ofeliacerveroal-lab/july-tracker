@@ -383,18 +383,45 @@ function MealSlot({ slot, entries, onAdd, onDelete }) {
 // ════════════════════════════════════════════════════════════════
 // TAB: TENSIÓN
 // ════════════════════════════════════════════════════════════════
+// Plan fijo de 7 días: sábado 20 → viernes 26 de junio de 2026
+const PLAN_DAYS = Array.from({ length:7 }, (_, i) => {
+  const d = new Date(2026, 5, 20 + i); // mes 5 = junio (hora local)
+  const iso = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  return { iso, d };
+});
+
 function TabTension({ tension, saveTension, showToast, readOnly }) {
+  // Día seleccionado: hoy si está dentro del plan, si no el primer día del plan
+  const initialDate = PLAN_DAYS.some(p => p.iso === TODAY) ? TODAY : PLAN_DAYS[0].iso;
+  const [selDate, setSelDate] = useState(initialDate);
+  const [period, setPeriod] = useState('morning');
   const [sys, setSys] = useState('');
   const [dia, setDia] = useState('');
   const [pulse, setPulse] = useState('');
-  const [period, setPeriod] = useState('morning');
+
+  // Índice de mediciones por día+periodo para poder mostrar valores y editarlos
+  const byKey = {};
+  tension.forEach(t => { byKey[`${t.date}|${t.period}`] = t; });
+
+  // Seleccionar una casilla (día + mañana/noche) y precargar su valor para editar
+  const selectCell = (date, prd) => {
+    setSelDate(date); setPeriod(prd);
+    const e = byKey[`${date}|${prd}`];
+    setSys(e ? String(e.sys) : '');
+    setDia(e ? String(e.dia) : '');
+    setPulse(e && e.pulse ? String(e.pulse) : '');
+  };
+
+  const editing = !!byKey[`${selDate}|${period}`];
 
   const add = () => {
     if (!sys || !dia) return;
-    saveTension([...tension, { id:Date.now(), date:TODAY, sys:+sys, dia:+dia, pulse:pulse?+pulse:null, period,
-      ts: new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}) }]);
-    setSys(''); setDia(''); setPulse('');
-    showToast('✓ Tensión guardada');
+    const existing = byKey[`${selDate}|${period}`];
+    const entry = { id: existing ? existing.id : Date.now(), date:selDate, sys:+sys, dia:+dia,
+      pulse: pulse ? +pulse : null, period,
+      ts: new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}) };
+    saveTension(existing ? tension.map(t => t.id === existing.id ? entry : t) : [...tension, entry]);
+    showToast(existing ? '✓ Tensión actualizada' : '✓ Tensión guardada');
   };
   const del = (id) => { saveTension(tension.filter(t => t.id !== id)); showToast('Eliminado'); };
 
@@ -404,36 +431,36 @@ function TabTension({ tension, saveTension, showToast, readOnly }) {
     return { label:'Alta', color:C.coral };
   };
 
-  // 7-day tracker
-  const last7 = Array.from({length:7}, (_,i) => {
-    const d = new Date(); d.setDate(d.getDate()-6+i);
-    return d.toISOString().split('T')[0];
-  });
-
-  // Per-day record of which periods were measured (morning / evening)
-  const periodsByDay = tension.reduce((acc, t) => {
-    (acc[t.date] = acc[t.date] || {})[t.period] = true;
-    return acc;
-  }, {});
-  const fullDays = last7.filter(d => periodsByDay[d]?.morning && periodsByDay[d]?.evening).length;
+  const fullDays = PLAN_DAYS.filter(p => byKey[`${p.iso}|morning`] && byKey[`${p.iso}|evening`]).length;
 
   return (
     <div>
       {/* 7-day grid */}
       <div style={{ background:C.sageLight, border:`1px solid ${C.sage}`, borderRadius:16, padding:16, marginBottom:16 }}>
-        <div style={{ fontWeight:700, color:C.sageDark, marginBottom:12 }}>Control de 7 días · mañana ☀️ y noche 🌙</div>
+        <div style={{ fontWeight:700, color:C.sageDark, marginBottom:4 }}>Control de 7 días · mañana ☀️ y noche 🌙</div>
+        <div style={{ fontSize:11, color:C.sageDark, marginBottom:12 }}>Sáb 20 → Vie 26 de junio{!readOnly && ' · toca una casilla para anotar o editar'}</div>
         <div style={{ display:'flex', gap:5 }}>
-          {last7.map(date => {
-            const p = periodsByDay[date] || {};
-            const d = new Date(date);
-            const cell = (on) => ({ flex:1, height:22, borderRadius:6, background: on ? C.sage : C.white,
-              border:`1px solid ${on?C.sage:C.border}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:11 });
+          {PLAN_DAYS.map(({ iso, d }) => {
+            const cell = (prd, emoji) => {
+              const on = !!byKey[`${iso}|${prd}`];
+              const isSel = !readOnly && selDate === iso && period === prd;
+              return {
+                flex:1, height:24, borderRadius:6, background: on ? C.sage : C.white,
+                border: isSel ? `2px solid ${C.sageDark}` : `1px solid ${on?C.sage:C.border}`,
+                display:'flex', alignItems:'center', justifyContent:'center', fontSize:11,
+                cursor: readOnly ? 'default' : 'pointer',
+              };
+            };
             return (
-              <div key={date} style={{ flex:1, textAlign:'center' }}>
+              <div key={iso} style={{ flex:1, textAlign:'center' }}>
                 <div style={{ fontSize:9, color:C.slateLight, marginBottom:4 }}>{d.toLocaleDateString('es-ES',{weekday:'narrow'})}</div>
                 <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
-                  <div style={cell(p.morning)}>{p.morning ? <span style={{color:C.white}}>✓</span> : <span style={{opacity:.4}}>☀️</span>}</div>
-                  <div style={cell(p.evening)}>{p.evening ? <span style={{color:C.white}}>✓</span> : <span style={{opacity:.4}}>🌙</span>}</div>
+                  <div onClick={readOnly ? undefined : () => selectCell(iso,'morning')} style={cell('morning')}>
+                    {byKey[`${iso}|morning`] ? <span style={{color:C.white}}>✓</span> : <span style={{opacity:.4}}>☀️</span>}
+                  </div>
+                  <div onClick={readOnly ? undefined : () => selectCell(iso,'evening')} style={cell('evening')}>
+                    {byKey[`${iso}|evening`] ? <span style={{color:C.white}}>✓</span> : <span style={{opacity:.4}}>🌙</span>}
+                  </div>
                 </div>
                 <div style={{ fontSize:8, color:C.slateLight, marginTop:3 }}>{d.getDate()}/{d.getMonth()+1}</div>
               </div>
@@ -448,10 +475,24 @@ function TabTension({ tension, saveTension, showToast, readOnly }) {
       {/* Input (hidden for coach) */}
       {!readOnly && (
         <div style={{ background:C.white, borderRadius:16, padding:16, marginBottom:16, boxShadow:'0 1px 4px rgba(0,0,0,.05)' }}>
-          <div style={{ fontWeight:700, marginBottom:12 }}>Registrar medición</div>
+          <div style={{ fontWeight:700, marginBottom:12 }}>{editing ? 'Editar medición' : 'Registrar medición'}</div>
+          {/* Day selector */}
+          <div style={{ fontSize:10, color:C.slateLight, fontWeight:600, marginBottom:6 }}>Día</div>
+          <div style={{ display:'flex', gap:5, marginBottom:12 }}>
+            {PLAN_DAYS.map(({ iso, d }) => (
+              <button key={iso} onClick={() => selectCell(iso, period)}
+                style={{ flex:1, padding:'7px 0', borderRadius:9, border:`1.5px solid ${selDate===iso?C.sage:C.border}`,
+                  background: selDate===iso ? C.sageLight : C.white, color: selDate===iso ? C.sageDark : C.slateLight,
+                  fontWeight:600, fontSize:11, cursor:'pointer', lineHeight:1.3 }}>
+                <div style={{ textTransform:'capitalize' }}>{d.toLocaleDateString('es-ES',{weekday:'short'}).replace('.','')}</div>
+                <div style={{ fontSize:13, fontWeight:700 }}>{d.getDate()}</div>
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize:10, color:C.slateLight, fontWeight:600, marginBottom:6 }}>Momento del día</div>
           <div style={{ display:'flex', gap:8, marginBottom:12 }}>
             {[{v:'morning',l:'Mañana ☀️'},{v:'evening',l:'Noche 🌙'}].map(p => (
-              <button key={p.v} onClick={() => { if (p.v !== period) { setPeriod(p.v); setSys(''); setDia(''); setPulse(''); } }}
+              <button key={p.v} onClick={() => selectCell(selDate, p.v)}
                 style={{ flex:1, padding:'9px', borderRadius:10, border:`1.5px solid ${period===p.v?C.sage:C.border}`,
                   background: period===p.v ? C.sageLight : C.white, color: period===p.v ? C.sageDark : C.slateLight,
                   fontWeight:600, fontSize:13, cursor:'pointer', transition:'all .15s' }}>
@@ -472,7 +513,7 @@ function TabTension({ tension, saveTension, showToast, readOnly }) {
           <button onClick={add} disabled={!sys||!dia}
             style={{ width:'100%', padding:13, background:(sys&&dia)?C.sage:C.border, color:C.white,
               border:'none', borderRadius:10, fontWeight:700, fontSize:15, cursor:(sys&&dia)?'pointer':'default', transition:'background .2s' }}>
-            Guardar medición
+            {editing ? 'Actualizar medición' : 'Guardar medición'}
           </button>
         </div>
       )}
