@@ -2,3 +2,7 @@ node_modules/
 build/
 .DS_Store
 npm-debug.log*
+
+# Variables de entorno locales (credenciales Supabase)
+.env.local
+.env*.local

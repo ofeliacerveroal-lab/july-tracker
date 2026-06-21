@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { createClient } from '@supabase/supabase-js';
 
 // ── Design tokens ──────────────────────────────────────────────
 const C = {
@@ -38,7 +39,15 @@ function writeLS(key, value) {
   window.dispatchEvent(new StorageEvent('storage', { key, newValue: JSON.stringify(value) }));
 }
 
-function useShared(key, init) {
+// ── Supabase (almacenamiento compartido entre clienta y July) ───
+// Las credenciales se leen de variables de entorno (REACT_APP_*).
+// Si no están configuradas, la app funciona en modo local (localStorage).
+const supabase = (process.env.REACT_APP_SUPABASE_URL && process.env.REACT_APP_SUPABASE_ANON_KEY)
+  ? createClient(process.env.REACT_APP_SUPABASE_URL, process.env.REACT_APP_SUPABASE_ANON_KEY)
+  : null;
+
+// Hook LOCAL: solo este dispositivo (p. ej. el rol). Sincroniza entre pestañas.
+function useLocal(key, init) {
   const [val, setVal] = useState(() => readLS(key, init));
   useEffect(() => {
     const handler = (e) => { if (e.key === key) setVal(readLS(key, init)); };
@@ -46,6 +55,42 @@ function useShared(key, init) {
     return () => window.removeEventListener('storage', handler);
   }, [key, init]);
   const save = useCallback((v) => { setVal(v); writeLS(key, v); }, [key]);
+  return [val, save];
+}
+
+// Hook COMPARTIDO: guarda en Supabase y se sincroniza en tiempo real entre
+// la clienta y July. localStorage se usa como caché para pintado instantáneo.
+function useCloud(key, init) {
+  const [val, setVal] = useState(() => readLS(key, init));
+  useEffect(() => {
+    let active = true;
+    if (!supabase) {
+      // Modo local de respaldo: sincroniza entre pestañas del mismo dispositivo.
+      const handler = (e) => { if (e.key === key) setVal(readLS(key, init)); };
+      window.addEventListener('storage', handler);
+      return () => window.removeEventListener('storage', handler);
+    }
+    // Carga inicial desde la nube.
+    supabase.from('kv').select('value').eq('key', key).maybeSingle()
+      .then(({ data }) => {
+        if (active && data && data.value != null) { setVal(data.value); writeLS(key, data.value); }
+      });
+    // Suscripción en tiempo real a los cambios de esta clave.
+    const channel = supabase.channel('kv:' + key)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'kv', filter: `key=eq.${key}` },
+        (payload) => {
+          const v = payload.new && payload.new.value;
+          if (active && v != null) { setVal(v); writeLS(key, v); }
+        })
+      .subscribe();
+    return () => { active = false; supabase.removeChannel(channel); };
+  }, [key]);
+  const save = useCallback((v) => {
+    setVal(v);
+    writeLS(key, v);
+    if (supabase) supabase.from('kv').upsert({ key, value: v }, { onConflict: 'key' }).then(() => {});
+  }, [key]);
   return [val, save];
 }
 
@@ -123,11 +168,11 @@ function RoleBtn({ icon, title, sub, onPress }) {
 // MAIN APP
 // ════════════════════════════════════════════════════════════════
 export default function App() {
-  const [role, setRole] = useShared(KEYS.role, null);
+  const [role, setRole] = useLocal(KEYS.role, null);
   const [tab, setTab] = useState('hoy');
-  const [tension, saveTension] = useShared(KEYS.tension, []);
-  const [meals, saveMeals] = useShared(KEYS.meals, []);
-  const [measurements, saveMeasurements] = useShared(KEYS.measurements, [
+  const [tension, saveTension] = useCloud(KEYS.tension, []);
+  const [meals, saveMeals] = useCloud(KEYS.meals, []);
+  const [measurements, saveMeasurements] = useCloud(KEYS.measurements, [
     { date:'2026-06-11', weight:91.75, waist:107, hips:61.5 }
   ]);
   const [reminder, setReminder] = useState(null);
