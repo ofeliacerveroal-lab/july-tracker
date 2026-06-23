@@ -640,8 +640,16 @@ function TabTension({ tension, saveTension, showToast, readOnly }) {
       {/* History */}
       {tension.length > 0 && (
         <div style={{ background:C.white, borderRadius:16, padding:16, boxShadow:'0 1px 4px rgba(0,0,0,.05)' }}>
-          <div style={{ fontWeight:700, marginBottom:12 }}>Historial</div>
-          {[...tension].reverse().slice(0,20).map(t => {
+          <div style={{ fontWeight:700, marginBottom:12 }}>Tensiones guardadas</div>
+          {[...tension]
+            .sort((a, b) => {
+              // Día más reciente primero; dentro del mismo día, noche antes que mañana.
+              if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+              const ord = { evening: 0, morning: 1 };
+              return ord[a.period] - ord[b.period];
+            })
+            .slice(0, 20)
+            .map(t => {
             const cls = classify(t.sys, t.dia);
             return (
               <div key={t.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'11px 0', borderBottom:`1px solid ${C.border}` }}>
