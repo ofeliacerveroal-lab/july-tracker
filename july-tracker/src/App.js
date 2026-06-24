@@ -637,6 +637,50 @@ function TabTension({ tension, saveTension, showToast, readOnly }) {
         </div>
       )}
 
+      {/* Resumen del día seleccionado, justo bajo el formulario */}
+      {!readOnly && (() => {
+        const dayObj = PLAN_DAYS.find(p => p.iso === selDate);
+        const dayName = dayObj
+          ? dayObj.d.toLocaleDateString('es-ES', { weekday:'long', day:'numeric', month:'long' })
+          : selDate;
+        const rows = [
+          { prd:'morning', label:'Mañana', emoji:'☀️' },
+          { prd:'evening', label:'Noche',  emoji:'🌙' },
+        ];
+        return (
+          <div style={{ background:C.white, borderRadius:16, padding:16, marginBottom:16, boxShadow:'0 1px 4px rgba(0,0,0,.05)' }}>
+            <div style={{ fontWeight:700, marginBottom:2, textTransform:'capitalize' }}>{dayName}</div>
+            <div style={{ fontSize:11, color:C.slateLight, marginBottom:12 }}>Tus dos tomas del día · toca una para editarla</div>
+            {rows.map(r => {
+              const e = byKey[`${selDate}|${r.prd}`];
+              const sel = period === r.prd;
+              const cls = e ? classify(e.sys, e.dia) : null;
+              return (
+                <div key={r.prd} onClick={() => selectCell(selDate, r.prd)}
+                  style={{ display:'flex', alignItems:'center', gap:10, padding:'11px 10px', marginBottom:8,
+                    borderRadius:12, cursor:'pointer',
+                    border:`1.5px solid ${sel ? C.sage : C.border}`,
+                    background: sel ? C.sageLight : C.white }}>
+                  <div style={{ fontSize:20, flexShrink:0 }}>{r.emoji}</div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:12, color:C.slateLight, fontWeight:600 }}>{r.label}</div>
+                    {e ? (
+                      <div style={{ fontSize:20, fontWeight:700, letterSpacing:-.5 }}>
+                        {e.sys}/{e.dia}
+                        {e.pulse && <span style={{ fontSize:12, color:C.slateLight, fontWeight:400 }}> · pulso {e.pulse}</span>}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize:13, color:C.slateLight }}>— sin registrar</div>
+                    )}
+                  </div>
+                  {cls && <div style={{ padding:'4px 12px', borderRadius:20, background:cls.color+'20', color:cls.color, fontSize:12, fontWeight:700, flexShrink:0 }}>{cls.label}</div>}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+
       {/* History */}
       {tension.length > 0 && (
         <div style={{ background:C.white, borderRadius:16, padding:16, boxShadow:'0 1px 4px rgba(0,0,0,.05)' }}>
